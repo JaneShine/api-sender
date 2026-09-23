@@ -1,4 +1,7 @@
-﻿# API Sender
+﻿# 获取key
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# API Sender
 
 一个已经可运行的 Signal Feed API。内部策略程序通过 Publish Key 发布结构化信号，外部 Agent 通过 Read Key 获取最新信号。
 
@@ -55,6 +58,20 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 建议生成一个 Publish Key，并为每位读取者分别生成 Read Key。真实 Key 只放在环境变量中，不要写进代码或提交到 GitHub。
+
+多个读取者可以使用带名称的 Key，便于人工识别和管理：
+
+```ini
+READ_API_KEYS=alice:keyA,bob:keyB,charlie:keyC
+```
+
+当前版本会把冒号两侧的内容整体视为 Token，因此客户端必须发送完整值，例如：
+
+```http
+Authorization: Bearer alice:keyA
+```
+
+名称目前仅用于人工管理；服务还不会按名称生成访问审计日志，也不要在日志中输出完整 Token。
 
 ## 发布信号
 
@@ -156,3 +173,4 @@ print(response.json())
 - `expires_at` 当前只作为数据字段返回，不会自动过滤过期信号
 
 这是当前 MVP 的预期行为；需要持久化或多进程部署时再引入数据库。
+
