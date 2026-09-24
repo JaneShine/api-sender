@@ -7,6 +7,8 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 GitHub：<https://github.com/JaneShine/api-sender>
 
+接收端开发或交给 Agent 自动接入时，请直接阅读 [RECEIVER_AGENT.md](./RECEIVER_AGENT.md)。账号和 Token 由管理员通过安全渠道另行提供。
+
 ## 当前状态
 
 - FastAPI 服务已实现并推送到 GitHub `main` 分支
@@ -173,4 +175,5 @@ print(response.json())
 - `expires_at` 当前只作为数据字段返回，不会自动过滤过期信号
 
 这是当前 MVP 的预期行为；需要持久化或多进程部署时再引入数据库。
+
 
