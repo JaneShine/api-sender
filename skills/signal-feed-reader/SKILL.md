@@ -26,7 +26,37 @@ Examples:
     python scripts/read_latest.py industry electronics
     python scripts/read_latest.py macro rates
 
-Return the independent JSON concisely. Always include owner in the displayed result. Identify channel, asset, strategy_id, strategy_name, publication time, and the values inside signals when present. Older payloads may instead contain a singular signal field. Do not claim that one signal represents another channel or asset.
+## Card output
+
+For a successful read, show a compact Markdown card before any explanation. Do not show raw JSON unless the user explicitly asks for it.
+
+Use this shape, adapting labels and rows to the actual payload:
+
+> ### 📊 {strategy_name}
+> **综合信号：** 🟢 {composite_signal}
+>
+> | 指标 | 状态 |
+> | --- | --- |
+> | 宏观 | ⚪ false |
+> | 景气 | 🟢 true |
+> | 交易 | 🟢 true |
+>
+> **频道 / 资产：** {channel} / {asset}  
+> **数据日期：** {as_of_date}  
+> **发布时间：** {published_at converted to Asia/Shanghai and labeled 北京时间}  
+> **Owner：** {owner}
+
+Always include owner. Render every entry in the signals object, not only the three example rows. Preserve the source key when no clear Chinese label exists.
+
+Status markers:
+- Boolean true: 🟢 true
+- Boolean false: ⚪ false
+- Numeric 1: 🟢 1
+- Numeric 0: ⚪ 0
+- Numeric -1: 🔴 -1
+- Other values: display unchanged without inventing an interpretation
+
+If strategy_name is absent, use strategy_id; if both are absent, use channel / asset as the title. Older payloads may contain a singular signal field; show it as the main signal. Do not claim that one signal represents another channel or asset.
 
 ## Response handling
 

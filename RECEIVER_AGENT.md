@@ -87,6 +87,8 @@ $signal-feed-reader 读取 industry/electronics 的最新信号
 
 每次调用只返回一个 channel + asset 对应的独立 JSON，不会把多个信号合并到一个响应里。
 
+Skill 默认将结果展示为紧凑信号卡牌，并始终显示 owner；只有用户明确要求时才展开原始 JSON。
+
 industry/electronics 返回示例：
 
 ~~~json
