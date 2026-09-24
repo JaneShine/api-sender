@@ -7,3 +7,7 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+.key.inc
+.jxxie_token.inc
+.all_acl.json
+.database_url.inc

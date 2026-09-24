@@ -23,7 +23,7 @@ https://api-sender-v68f.onrender.com
 
 每个 channel + asset 是独立信号流，例如 industry/electronics、industry/automobile 和 macro/rates。发布新的 industry/electronics 只更新该组合，不覆盖其他组合。API 每次只返回一个独立 JSON。
 
-同一组合目前只保留最新一条。服务重启或重新部署后，所有内存信号都会清空。
+同一组合只保留最新一条。配置 DATABASE_URL 后，信号保存在 PostgreSQL 中，服务休眠、重启或重新部署后仍可读取；未配置时回退到内存模式。
 
 每条发布数据必须包含非空 owner；因此所有成功读取的信号都保证返回 owner。
 
@@ -125,13 +125,28 @@ Authorization: Bearer alice:<Alice的实际Token>
 1. 推送代码并等待 Render 自动部署。
 2. 打开 api-sender Web Service 的 Environment。
 3. 新增 READ_API_ACL，值为单行 JSON。
-4. 暂时保留现有 READ_API_KEYS。
-5. 保存并等待重新部署。
-6. 使用新 account:token 分别测试授权和越权信号。
-7. 所有旧客户端迁移完成后，删除 READ_API_KEYS。
+4. 新增 DATABASE_URL，值为 Neon 提供的 pooled connection string。
+5. 暂时保留现有 READ_API_KEYS。
+6. 保存并等待重新部署。
+7. 访问 /health，确认 storage 返回 postgresql。
+8. 使用新 account:token 分别测试授权和越权信号。
+9. 所有旧客户端迁移完成后，删除 READ_API_KEYS。
 
-修改环境变量会重启服务并清空内存信号，需要发布端重新发布。
+配置 DATABASE_URL 后，修改环境变量或重新部署不会丢失已发布信号。DATABASE_URL 属于密钥，只能存放在本地忽略文件和 Render Environment。
 
+## PostgreSQL 持久化
+
+服务启动时会自动创建 latest_signals 表，无需手工执行 SQL。发布接口按 channel + asset Upsert，读取接口查询同一条持久化记录。
+
+未配置 DATABASE_URL 时，服务仍能以内存模式运行，但重启后数据会丢失。生产环境应检查：
+
+~~~json
+{
+  "status": "ok",
+  "service": "signal-feed-api",
+  "storage": "postgresql"
+}
+~~~
 ## 安全要求
 
 - PUBLISH_API_KEY 只交给发布端。

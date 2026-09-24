@@ -2,17 +2,20 @@ import json
 import logging
 import os
 import secrets
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
+import psycopg
 from fastapi import FastAPI, Header, HTTPException
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
 
-app = FastAPI(title="Signal Feed API", version="0.2.1")
 logger = logging.getLogger("signal-feed-api")
 
 PUBLISH_API_KEY = os.environ.get("PUBLISH_API_KEY", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 READ_API_KEYS = {
     key.strip()
     for key in os.environ.get("READ_API_KEYS", "").split(",")
@@ -74,6 +77,39 @@ class ReaderIdentity:
     is_legacy: bool = False
 
 
+def initialize_storage() -> None:
+    if not DATABASE_URL:
+        logger.warning("DATABASE_URL is not configured; using volatile memory storage")
+        return
+
+    with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS latest_signals (
+                channel TEXT NOT NULL,
+                asset TEXT NOT NULL,
+                payload JSONB NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (channel, asset)
+            )
+            """
+        )
+    logger.info("PostgreSQL signal storage initialized")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_storage()
+    yield
+
+
+app = FastAPI(
+    title="Signal Feed API",
+    version="0.3.0",
+    lifespan=lifespan,
+)
+
+
 def extract_token(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
@@ -128,28 +164,116 @@ def require_publisher(authorization: str | None) -> None:
         raise HTTPException(status_code=403, detail="Invalid publish API key")
 
 
+def save_signal(signal: SignalOut) -> None:
+    global latest_signal
+
+    if DATABASE_URL:
+        payload = signal.model_dump(mode="json", exclude_unset=True)
+        try:
+            with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO latest_signals (
+                        channel,
+                        asset,
+                        payload,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (channel, asset)
+                    DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (
+                        signal.channel,
+                        signal.asset,
+                        Jsonb(payload),
+                        signal.published_at,
+                    ),
+                )
+        except psycopg.Error as exc:
+            logger.exception("Failed to save signal to PostgreSQL")
+            raise HTTPException(
+                status_code=503,
+                detail="Signal storage is temporarily unavailable",
+            ) from exc
+
+    latest_signal = signal
+    latest_signals[(signal.channel, signal.asset)] = signal
+
+
+def load_signal(channel: str | None, asset: str | None) -> SignalOut | None:
+    if DATABASE_URL:
+        try:
+            with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+                if channel is not None and asset is not None:
+                    row = connection.execute(
+                        """
+                        SELECT payload
+                        FROM latest_signals
+                        WHERE channel = %s AND asset = %s
+                        """,
+                        (channel, asset),
+                    ).fetchone()
+                else:
+                    row = connection.execute(
+                        """
+                        SELECT payload
+                        FROM latest_signals
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """
+                    ).fetchone()
+        except psycopg.Error as exc:
+            logger.exception("Failed to load signal from PostgreSQL")
+            raise HTTPException(
+                status_code=503,
+                detail="Signal storage is temporarily unavailable",
+            ) from exc
+
+        return SignalOut.model_validate(row[0]) if row else None
+
+    if channel is not None and asset is not None:
+        return latest_signals.get((channel, asset))
+    return latest_signal
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "signal-feed-api"}
+    return {
+        "status": "ok",
+        "service": "signal-feed-api",
+        "storage": "postgresql" if DATABASE_URL else "memory",
+    }
 
 
-@app.post("/v1/publish", response_model=SignalOut, response_model_exclude_unset=True, response_model_exclude_none=True)
+@app.post(
+    "/v1/publish",
+    response_model=SignalOut,
+    response_model_exclude_unset=True,
+    response_model_exclude_none=True,
+)
 def publish_signal(
     signal: SignalIn,
     authorization: str | None = Header(default=None),
 ) -> SignalOut:
-    global latest_signal
     require_publisher(authorization)
-    latest_signal = SignalOut(
+    published_signal = SignalOut(
         **signal.model_dump(exclude_unset=True),
         id=secrets.token_urlsafe(12),
         published_at=datetime.now(timezone.utc),
     )
-    latest_signals[(signal.channel, signal.asset)] = latest_signal
-    return latest_signal
+    save_signal(published_signal)
+    return published_signal
 
 
-@app.get("/v1/latest", response_model=SignalOut, response_model_exclude_unset=True, response_model_exclude_none=True)
+@app.get(
+    "/v1/latest",
+    response_model=SignalOut,
+    response_model_exclude_unset=True,
+    response_model_exclude_none=True,
+)
 def get_latest_signal(
     channel: str | None = None,
     asset: str | None = None,
@@ -163,33 +287,25 @@ def get_latest_signal(
             detail="channel and asset must be provided together",
         )
 
-    if channel is not None and asset is not None:
-        requested_channel = channel
-        requested_asset = asset
-        signal = latest_signals.get((channel, asset))
-    else:
-        signal = latest_signal
-        if signal is None:
-            raise HTTPException(status_code=404, detail="No signal has been published yet")
-        requested_channel = signal.channel
-        requested_asset = signal.asset
+    signal = load_signal(channel, asset)
+    if signal is None:
+        if channel is not None and asset is not None:
+            raise HTTPException(
+                status_code=404,
+                detail="No signal has been published for this channel and asset",
+            )
+        raise HTTPException(status_code=404, detail="No signal has been published yet")
 
-    if not can_read(reader, requested_channel, requested_asset):
+    if not can_read(reader, signal.channel, signal.asset):
         raise HTTPException(
             status_code=403,
             detail="Reader is not allowed to access this signal",
         )
 
-    if signal is None:
-        raise HTTPException(
-            status_code=404,
-            detail="No signal has been published for this channel and asset",
-        )
-
     logger.info(
         "signal_read account=%s channel=%s asset=%s",
         reader.account,
-        requested_channel,
-        requested_asset,
+        signal.channel,
+        signal.asset,
     )
     return signal
