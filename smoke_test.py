@@ -98,6 +98,7 @@ def main() -> int:
         "channel": received["channel"],
         "asset": received["asset"],
         "strategy_id": received["strategy_id"],
+        "owner": received["owner"],
         "signals": received["signals"],
         "id": received["id"],
         "published_at": received["published_at"],
