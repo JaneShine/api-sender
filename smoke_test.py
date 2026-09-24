@@ -24,6 +24,7 @@ PAYLOAD = {
         "macro_bull": False,
         "prosperity_bull": True,
         "trading_bull": True,
+        "composite_signal": 1,
     },
     "owner": "jxxie@efund",
 }

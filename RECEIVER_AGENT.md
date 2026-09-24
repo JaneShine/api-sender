@@ -101,7 +101,8 @@ industry/electronics 返回示例：
   "signals": {
     "macro_bull": false,
     "prosperity_bull": true,
-    "trading_bull": true
+    "trading_bull": true,
+    "composite_signal": 1
   },
   "owner": "jxxie@efund",
   "id": "服务端生成",
