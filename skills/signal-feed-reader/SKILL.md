@@ -26,7 +26,7 @@ Examples:
     python scripts/read_latest.py industry electronics
     python scripts/read_latest.py macro rates
 
-Return the independent JSON concisely. Identify channel, asset, strategy_id, strategy_name, publication time, and the values inside signals when present. Older payloads may instead contain a singular signal field. Do not claim that one signal represents another channel or asset.
+Return the independent JSON concisely. Always include owner in the displayed result. Identify channel, asset, strategy_id, strategy_name, publication time, and the values inside signals when present. Older payloads may instead contain a singular signal field. Do not claim that one signal represents another channel or asset.
 
 ## Response handling
 

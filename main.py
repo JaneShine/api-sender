@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-app = FastAPI(title="Signal Feed API", version="0.2.0")
+app = FastAPI(title="Signal Feed API", version="0.2.1")
 logger = logging.getLogger("signal-feed-api")
 
 PUBLISH_API_KEY = os.environ.get("PUBLISH_API_KEY", "")
@@ -50,7 +50,7 @@ class SignalIn(BaseModel):
     universe: str | None = None
     as_of_date: date | None = None
     signals: dict[str, Any] = Field(default_factory=dict)
-    owner: str | None = None
+    owner: str = Field(min_length=1)
     value: float | None = None
     confidence: float | None = None
     source: str | None = None
