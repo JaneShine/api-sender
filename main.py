@@ -46,14 +46,14 @@ class SignalIn(BaseModel):
 
     channel: str
     asset: str
+    as_of_date: date
+    owner: str = Field(min_length=1)
     signal: str | None = None
     strategy_id: str | None = None
     strategy_name: str | None = None
     strategy_version: str | None = None
     universe: str | None = None
-    as_of_date: date | None = None
     signals: dict[str, Any] = Field(default_factory=dict)
-    owner: str = Field(min_length=1)
     value: float | None = None
     confidence: float | None = None
     source: str | None = None
@@ -67,7 +67,7 @@ class SignalOut(SignalIn):
 
 
 latest_signal: SignalOut | None = None
-latest_signals: dict[tuple[str, str], SignalOut] = {}
+latest_signals: dict[tuple[str, str, date], SignalOut] = {}
 
 
 @dataclass(frozen=True)
@@ -94,7 +94,45 @@ def initialize_storage() -> None:
             )
             """
         )
-    logger.info("PostgreSQL signal storage initialized")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS signal_snapshots (
+                channel TEXT NOT NULL,
+                asset TEXT NOT NULL,
+                as_of_date DATE NOT NULL,
+                payload JSONB NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (channel, asset, as_of_date)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO signal_snapshots (
+                channel,
+                asset,
+                as_of_date,
+                payload,
+                updated_at
+            )
+            SELECT
+                channel,
+                asset,
+                COALESCE(
+                    NULLIF(payload->>'as_of_date', '')::date,
+                    updated_at::date
+                ),
+                payload,
+                updated_at
+            FROM latest_signals
+            ON CONFLICT (channel, asset, as_of_date)
+            DO UPDATE SET
+                payload = EXCLUDED.payload,
+                updated_at = EXCLUDED.updated_at
+            WHERE EXCLUDED.updated_at > signal_snapshots.updated_at
+            """
+        )
+    logger.info("PostgreSQL signal snapshot storage initialized")
 
 
 @asynccontextmanager
@@ -105,7 +143,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Signal Feed API",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -173,14 +211,15 @@ def save_signal(signal: SignalOut) -> None:
             with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
                 connection.execute(
                     """
-                    INSERT INTO latest_signals (
+                    INSERT INTO signal_snapshots (
                         channel,
                         asset,
+                        as_of_date,
                         payload,
                         updated_at
                     )
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (channel, asset)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (channel, asset, as_of_date)
                     DO UPDATE SET
                         payload = EXCLUDED.payload,
                         updated_at = EXCLUDED.updated_at
@@ -188,6 +227,7 @@ def save_signal(signal: SignalOut) -> None:
                     (
                         signal.channel,
                         signal.asset,
+                        signal.as_of_date,
                         Jsonb(payload),
                         signal.published_at,
                     ),
@@ -200,19 +240,40 @@ def save_signal(signal: SignalOut) -> None:
             ) from exc
 
     latest_signal = signal
-    latest_signals[(signal.channel, signal.asset)] = signal
+    latest_signals[(signal.channel, signal.asset, signal.as_of_date)] = signal
 
 
-def load_signal(channel: str | None, asset: str | None) -> SignalOut | None:
+def load_signal(
+    channel: str | None,
+    asset: str | None,
+    snapshot_date: date | None,
+) -> SignalOut | None:
     if DATABASE_URL:
         try:
             with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
-                if channel is not None and asset is not None:
+                if (
+                    channel is not None
+                    and asset is not None
+                    and snapshot_date is not None
+                ):
                     row = connection.execute(
                         """
                         SELECT payload
-                        FROM latest_signals
+                        FROM signal_snapshots
+                        WHERE channel = %s
+                          AND asset = %s
+                          AND as_of_date = %s
+                        """,
+                        (channel, asset, snapshot_date),
+                    ).fetchone()
+                elif channel is not None and asset is not None:
+                    row = connection.execute(
+                        """
+                        SELECT payload
+                        FROM signal_snapshots
                         WHERE channel = %s AND asset = %s
+                        ORDER BY as_of_date DESC, updated_at DESC
+                        LIMIT 1
                         """,
                         (channel, asset),
                     ).fetchone()
@@ -220,7 +281,7 @@ def load_signal(channel: str | None, asset: str | None) -> SignalOut | None:
                     row = connection.execute(
                         """
                         SELECT payload
-                        FROM latest_signals
+                        FROM signal_snapshots
                         ORDER BY updated_at DESC
                         LIMIT 1
                         """
@@ -234,8 +295,17 @@ def load_signal(channel: str | None, asset: str | None) -> SignalOut | None:
 
         return SignalOut.model_validate(row[0]) if row else None
 
+    if channel is not None and asset is not None and snapshot_date is not None:
+        return latest_signals.get((channel, asset, snapshot_date))
+
     if channel is not None and asset is not None:
-        return latest_signals.get((channel, asset))
+        matches = [
+            signal
+            for (stored_channel, stored_asset, _), signal in latest_signals.items()
+            if stored_channel == channel and stored_asset == asset
+        ]
+        return max(matches, key=lambda signal: signal.as_of_date) if matches else None
+
     return latest_signal
 
 
@@ -277,6 +347,7 @@ def publish_signal(
 def get_latest_signal(
     channel: str | None = None,
     asset: str | None = None,
+    as_of_date: date | None = None,
     authorization: str | None = Header(default=None),
 ) -> SignalOut:
     reader = require_reader(authorization)
@@ -286,13 +357,18 @@ def get_latest_signal(
             status_code=400,
             detail="channel and asset must be provided together",
         )
+    if as_of_date is not None and (channel is None or asset is None):
+        raise HTTPException(
+            status_code=400,
+            detail="as_of_date requires channel and asset",
+        )
 
-    signal = load_signal(channel, asset)
+    signal = load_signal(channel, asset, as_of_date)
     if signal is None:
         if channel is not None and asset is not None:
             raise HTTPException(
                 status_code=404,
-                detail="No signal has been published for this channel and asset",
+                detail="No signal has been published for this channel, asset, and date",
             )
         raise HTTPException(status_code=404, detail="No signal has been published yet")
 
@@ -303,9 +379,10 @@ def get_latest_signal(
         )
 
     logger.info(
-        "signal_read account=%s channel=%s asset=%s",
+        "signal_read account=%s channel=%s asset=%s as_of_date=%s",
         reader.account,
         signal.channel,
         signal.asset,
+        signal.as_of_date,
     )
     return signal

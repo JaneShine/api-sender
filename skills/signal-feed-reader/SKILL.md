@@ -15,7 +15,7 @@ The authorization credential is user:token. Never display, log, persist, or comm
 
 ## Reading a signal
 
-Determine the requested channel and asset from the user's request. If either is missing, use SIGNAL_DEFAULT_CHANNEL or SIGNAL_DEFAULT_ASSET when configured. Ask for the missing identifier only when it cannot be inferred or defaulted.
+Determine the requested channel and asset from the user's request. If either is missing, use SIGNAL_DEFAULT_CHANNEL or SIGNAL_DEFAULT_ASSET when configured. Ask for the missing identifier only when it cannot be inferred or defaulted. If the user specifies a data date, pass it with --date YYYY-MM-DD; otherwise read the latest available date.
 
 Run the bundled script relative to this SKILL.md, regardless of the user's current working directory:
 
@@ -25,6 +25,7 @@ Examples:
 
     python scripts/read_latest.py industry electronics
     python scripts/read_latest.py macro rates
+    python scripts/read_latest.py industry electronics --date 2026-09-23
 
 ## Card output
 

@@ -16,12 +16,12 @@ https://api-sender-v68f.onrender.com
 | --- | --- | --- |
 | GET | /health | 健康检查 |
 | POST | /v1/publish | 发布信号，需要 Publish Key |
-| GET | /v1/latest?channel=...&asset=... | 读取指定信号，需要 Reader 凭据 |
+| GET | /v1/latest?channel=...&asset=...&as_of_date=... | 读取最新或指定日期信号，需要 Reader 凭据 |
 | GET | /docs | Swagger 文档 |
 
 ## 数据模型
 
-每个 channel + asset 是独立信号流，例如 industry/electronics、industry/automobile 和 macro/rates。发布新的 industry/electronics 只更新该组合，不覆盖其他组合。API 每次只返回一个独立 JSON。
+每条快照由 channel + asset + as_of_date 唯一标识。相同日期再次发布会更新当天快照，不同日期会分别保留。API 每次只返回一个独立 JSON。
 
 同一组合只保留最新一条。配置 DATABASE_URL 后，信号保存在 PostgreSQL 中，服务休眠、重启或重新部署后仍可读取；未配置时回退到内存模式。
 
@@ -136,7 +136,7 @@ Authorization: Bearer alice:<Alice的实际Token>
 
 ## PostgreSQL 持久化
 
-服务启动时会自动创建 latest_signals 表，无需手工执行 SQL。发布接口按 channel + asset Upsert，读取接口查询同一条持久化记录。
+服务启动时会自动创建并迁移 signal_snapshots 表，无需手工执行 SQL。发布接口按 channel + asset + as_of_date Upsert；读取时不传日期返回日期最新的一条，传日期返回指定快照。
 
 未配置 DATABASE_URL 时，服务仍能以内存模式运行，但重启后数据会丢失。生产环境应检查：
 

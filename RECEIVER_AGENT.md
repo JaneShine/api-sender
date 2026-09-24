@@ -123,6 +123,7 @@ Authorization: Bearer <account>:<token>
 
 ~~~powershell
 python skills/signal-feed-reader/scripts/read_latest.py industry electronics
+python skills/signal-feed-reader/scripts/read_latest.py industry electronics --date 2026-09-23
 ~~~
 
 脚本只使用 Python 标准库，无需安装 requests。

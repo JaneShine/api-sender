@@ -30,6 +30,11 @@ def main() -> int:
         default=os.environ.get("SIGNAL_DEFAULT_ASSET"),
     )
     parser.add_argument(
+        "--date",
+        dest="as_of_date",
+        help="Read an exact as_of_date in YYYY-MM-DD format; omit for latest.",
+    )
+    parser.add_argument(
         "--base-url",
         default=os.environ.get("SIGNAL_API_BASE_URL", DEFAULT_BASE_URL),
     )
@@ -50,10 +55,13 @@ def main() -> int:
         })
         return 2
 
-    query = urllib.parse.urlencode({
+    query_params = {
         "channel": args.channel,
         "asset": args.asset,
-    })
+    }
+    if args.as_of_date:
+        query_params["as_of_date"] = args.as_of_date
+    query = urllib.parse.urlencode(query_params)
     url = f"{args.base_url.rstrip('/')}/v1/latest?{query}"
     request = urllib.request.Request(
         url,
