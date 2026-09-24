@@ -1,0 +1,4 @@
+interface:
+  display_name: "Signal Feed Reader"
+  short_description: "Read authorized channel and asset signals"
+  default_prompt: "Use $signal-feed-reader to read the latest industry/electronics signal."

@@ -1,179 +1,139 @@
-﻿# 获取key
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-
 # API Sender
 
-一个已经可运行的 Signal Feed API。内部策略程序通过 Publish Key 发布结构化信号，外部 Agent 通过 Read Key 获取最新信号。
+Signal Feed API 用于发布和读取彼此独立的结构化信号。每个信号流由 channel + asset 唯一标识。
 
 GitHub：<https://github.com/JaneShine/api-sender>
 
-接收端开发或交给 Agent 自动接入时，请直接阅读 [RECEIVER_AGENT.md](./RECEIVER_AGENT.md)。账号和 Token 由管理员通过安全渠道另行提供。
+接收端一键安装和 Agent 使用说明见 [RECEIVER_AGENT.md](./RECEIVER_AGENT.md)。
 
-## 当前状态
+## 当前服务
 
-- FastAPI 服务已实现并推送到 GitHub `main` 分支
-- 已实现健康检查、信号发布、最新信号读取
-- 发布权限和读取权限使用不同 API Key
-- 已通过本地接口验收
-- 尚未部署到 Render；完成下方部署步骤后即可获得公网 HTTPS 地址
+~~~text
+https://api-sender-v68f.onrender.com
+~~~
 
-## API
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | /health | 健康检查 |
+| POST | /v1/publish | 发布信号，需要 Publish Key |
+| GET | /v1/latest?channel=...&asset=... | 读取指定信号，需要 Reader 凭据 |
+| GET | /docs | Swagger 文档 |
 
-| 方法 | 地址 | 权限 | 说明 |
-| --- | --- | --- | --- |
-| GET | `/health` | 无 | 健康检查 |
-| POST | `/v1/publish` | Publish Key | 发布信号并覆盖内存中的上一条信号 |
-| GET | `/v1/latest` | Read Key | 获取最新信号 |
-| GET | `/docs` | 无 | Swagger API 文档 |
+## 数据模型
 
-认证请求头：
+每个 channel + asset 是独立信号流，例如 industry/electronics、industry/automobile 和 macro/rates。发布新的 industry/electronics 只更新该组合，不覆盖其他组合。API 每次只返回一个独立 JSON。
 
-```http
-Authorization: Bearer <API_KEY>
-```
+同一组合目前只保留最新一条。服务重启或重新部署后，所有内存信号都会清空。
 
-## 快速启动
+## 本地运行
 
 要求 Python 3.10 或更高版本。
 
-```powershell
-git clone git@github.com:JaneShine/api-sender.git
-cd api-sender
+~~~powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-
 $env:PUBLISH_API_KEY="替换为发布Key"
-$env:READ_API_KEYS="读取Key-A,读取Key-B"
+$env:READ_API_KEYS="旧版兼容Key"
+$env:READ_API_ACL='{"alice":{"token":"替换为Alice的Token","allow":["industry:electronics"]}}'
 python -m uvicorn main:app --reload
-```
+~~~
 
-启动后访问：
+打开 <http://127.0.0.1:8000/docs>。
 
-- Swagger：<http://127.0.0.1:8000/docs>
-- 健康检查：<http://127.0.0.1:8000/health>
+生成 Token：
 
-生成安全 API Key：
-
-```powershell
+~~~powershell
 python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-建议生成一个 Publish Key，并为每位读取者分别生成 Read Key。真实 Key 只放在环境变量中，不要写进代码或提交到 GitHub。
-
-多个读取者可以使用带名称的 Key，便于人工识别和管理：
-
-```ini
-READ_API_KEYS=alice:keyA,bob:keyB,charlie:keyC
-```
-
-当前版本会把冒号两侧的内容整体视为 Token，因此客户端必须发送完整值，例如：
-
-```http
-Authorization: Bearer alice:keyA
-```
-
-名称目前仅用于人工管理；服务还不会按名称生成访问审计日志，也不要在日志中输出完整 Token。
+~~~
 
 ## 发布信号
 
-PowerShell 示例：
+请求：
 
-```powershell
-$headers = @{ Authorization = "Bearer 替换为发布Key" }
-$body = @{
-  channel = "index"
-  asset = "IH"
-  signal = "risk_off"
-  value = 0.73
-  confidence = 0.81
-  source = "vol_structure"
-  expires_at = "2026-09-24T01:30:00Z"
-  metadata = @{ model = "index_signal_v3" }
-} | ConvertTo-Json
+~~~http
+POST /v1/publish
+Authorization: Bearer <PUBLISH_API_KEY>
+Content-Type: application/json
+~~~
 
-Invoke-RestMethod -Method Post `
-  -Uri "http://127.0.0.1:8000/v1/publish" `
-  -Headers $headers `
-  -ContentType "application/json" `
-  -Body $body
-```
+Body 示例：
 
-服务会自动补充 `id` 和 UTC 时间 `published_at`。
-
-## 获取最新信号
-
-```powershell
-$headers = @{ Authorization = "Bearer 替换为读取Key" }
-Invoke-RestMethod -Method Get `
-  -Uri "http://127.0.0.1:8000/v1/latest" `
-  -Headers $headers
-```
-
-尚未发布任何信号时返回 `404`；缺少认证头返回 `401`；Key 错误或权限不匹配返回 `403`。
-
-## Python 客户端
-
-```python
-import requests
-
-base_url = "http://127.0.0.1:8000"
-
-response = requests.get(
-    f"{base_url}/v1/latest",
-    headers={"Authorization": "Bearer <READ_API_KEY>"},
-    timeout=10,
-)
-response.raise_for_status()
-print(response.json())
-```
-
-## 部署到 Render
-
-1. 登录 Render，选择 **New → Web Service**。
-2. 连接 GitHub 仓库 `JaneShine/api-sender`。
-3. Runtime 选择 **Python**。
-4. Build Command 填写 `pip install -r requirements.txt`。
-5. Start Command 填写 `uvicorn main:app --host 0.0.0.0 --port $PORT`。
-6. 添加环境变量：
-   - `PUBLISH_API_KEY`：发布端专用 Key
-   - `READ_API_KEYS`：多个 Read Key 用英文逗号分隔
-7. 部署后访问 `https://<Render服务名>.onrender.com/health` 验证服务。
-8. 将上方调用示例中的本地地址替换为 Render HTTPS 地址。
-
-健康检查应返回：
-
-```json
+~~~json
 {
-  "status": "ok",
-  "service": "signal-feed-api"
+  "channel": "industry",
+  "asset": "electronics",
+  "strategy_id": "industry_electronics",
+  "strategy_name": "量化行业策略：电子（申信）",
+  "strategy_version": "1.0",
+  "universe": "elec",
+  "as_of_date": "2026-09-23",
+  "signals": {
+    "macro_bull": false,
+    "prosperity_bull": true,
+    "trading_bull": true
+  },
+  "owner": "jxxie@efund"
 }
-```
+~~~
 
-## 数据字段
+## Reader ACL
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `channel` | string | 是 | 信号类别 |
-| `asset` | string | 是 | 标的 |
-| `signal` | string | 是 | 决策状态 |
-| `value` | float | 否 | 原始数值 |
-| `confidence` | float | 否 | 置信度 |
-| `source` | string | 否 | 信号来源 |
-| `expires_at` | datetime | 否 | 失效时间 |
-| `metadata` | object | 否 | 扩展数据 |
-| `id` | string | 服务生成 | 信号 ID |
-| `published_at` | datetime | 服务生成 | 发布时间 |
+一个用户只需一个 Token，同一个 Token 可以拥有多个信号权限。Render 环境变量 READ_API_ACL 示例：
 
-## 当前限制
+~~~json
+{
+  "alice": {
+    "token": "Alice的实际随机Token",
+    "allow": [
+      "industry:electronics",
+      "industry:automobile"
+    ]
+  },
+  "bob": {
+    "token": "Bob的实际随机Token",
+    "allow": [
+      "industry:electronics"
+    ]
+  }
+}
+~~~
 
-当前版本只在进程内存中保存最新一条信号：
+Render 中需要填写为单行 JSON。
 
-- 服务重启或重新部署后，最新信号会清空
-- 不支持历史查询
-- 不要配置多个 Uvicorn worker，否则每个进程会保存不同的数据
-- `expires_at` 当前只作为数据字段返回，不会自动过滤过期信号
+| 权限 | 含义 |
+| --- | --- |
+| industry:electronics | 精确读取一个信号 |
+| industry:* | 读取 industry 下所有资产 |
+| *:electronics | 读取所有频道的 electronics |
+| *:* | 读取全部信号 |
 
-这是当前 MVP 的预期行为；需要持久化或多进程部署时再引入数据库。
+认证和读取示例：
 
+~~~http
+GET /v1/latest?channel=industry&asset=electronics
+Authorization: Bearer alice:<Alice的实际Token>
+~~~
 
+旧 READ_API_KEYS 暂时保留兼容能力，旧 Key 可以读取所有信号。确认所有接收端迁移到 ACL 后，应从 Render 删除 READ_API_KEYS。
+
+## Render 升级步骤
+
+1. 推送代码并等待 Render 自动部署。
+2. 打开 api-sender Web Service 的 Environment。
+3. 新增 READ_API_ACL，值为单行 JSON。
+4. 暂时保留现有 READ_API_KEYS。
+5. 保存并等待重新部署。
+6. 使用新 account:token 分别测试授权和越权信号。
+7. 所有旧客户端迁移完成后，删除 READ_API_KEYS。
+
+修改环境变量会重启服务并清空内存信号，需要发布端重新发布。
+
+## 安全要求
+
+- PUBLISH_API_KEY 只交给发布端。
+- 每个接收方使用独立 account 和 Token。
+- 不在日志中打印 Token 或 Authorization 请求头。
+- Token 文件必须加入 .gitignore。
+- 撤销用户时，从 READ_API_ACL 删除该 account。
+- 修改权限时只调整 allow，无需更换 Token。
