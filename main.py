@@ -87,8 +87,8 @@ def require_reader(authorization: str | None) -> ReaderIdentity:
     credential = extract_token(authorization)
 
     account, separator, token = credential.partition(":")
-    if separator and account and token:
-        reader = READ_API_ACL.get(account)
+    if separator and account and token and account in READ_API_ACL:
+        reader = READ_API_ACL[account]
         if isinstance(reader, dict):
             expected_token = reader.get("token")
             permissions = reader.get("allow")
@@ -99,6 +99,8 @@ def require_reader(authorization: str | None) -> ReaderIdentity:
                 and secrets.compare_digest(token, expected_token)
             ):
                 return ReaderIdentity(account=account, permissions=tuple(permissions))
+
+        raise HTTPException(status_code=403, detail="Invalid reader credential")
 
     if any(secrets.compare_digest(credential, key) for key in READ_API_KEYS):
         return ReaderIdentity(
