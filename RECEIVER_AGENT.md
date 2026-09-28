@@ -96,7 +96,7 @@ industry/electronics 返回示例：
   "channel": "industry",
   "asset": "electronics",
   "strategy_id": "industry_electronics",
-  "strategy_name": "量化行业策略：电子（申信）",
+  "strategy_name": "量化行业策略：电子（中信）",
   "strategy_version": "1.0",
   "universe": "elec",
   "as_of_date": "2026-09-23",
